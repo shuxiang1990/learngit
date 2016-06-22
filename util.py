@@ -50,12 +50,17 @@ def timeout_signal(seconds, error_message="Exception: <{0} seconds timeout>"):
         return functools.wraps(func)(wrapper)
     return decorated
 
+@timeout_process(3)
+def slowfunc(sleep_time):
+    a = 1
+    import time
+    time.sleep(sleep_time)
+    return a
+#############################
+# 获取本机合适的 ip
+#############################
+def get_valid_ip():
+    pass
 
 if __name__ == "__main__":
-    @timeout_signal(3)
-    def slowfunc(sleep_time):
-        a = 1
-        import time
-        time.sleep(sleep_time)
-        return a
     print slowfunc(11)
