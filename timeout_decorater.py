@@ -56,11 +56,6 @@ def slowfunc(sleep_time):
     import time
     time.sleep(sleep_time)
     return a
-#############################
-# 获取本机合适的 ip
-#############################
-def get_valid_ip():
-    pass
 
 if __name__ == "__main__":
     print slowfunc(11)
