@@ -9,6 +9,10 @@ FILTER_USER = ""
 FILTER_CODE = (1146, 1396)
 LOGGER = logging.getLogger(__name__)
 
+class UserExistsError(Exception):
+    message = "UserExistsError"
+    http_code = 417
+
 class Struct:
     """covert dict to class"""
     def __init__(self, **entries):
@@ -33,10 +37,9 @@ class MySQLVariables(object):
 
 class DBHandler(object):
     """common operation for mysql
-
     """
     def __init__(self, host, database, user, password, charset="utf8", **kwargs):
-        self.conn = Connection(host, database, user, password, charset=charset, **kwargs)
+        self.conn = Connection(host=host, db=database, user=user, passwd=password, charset=charset, **kwargs)
         self.user = user
         self.host = host
         self.password = password
@@ -227,7 +230,7 @@ class DBHandler(object):
     def create_user_and_grant_privileges(self, user, host, password, privs, is_plain=False,
                                          force=True, filter_code=FILTER_CODE):
         """
-        :param is_plain： true/false plain password or encyrept
+        :param is_plain： true/false real passwd or encypt passwd
         """
         if self.is_account_exists(user, host):
             if not force:
@@ -545,3 +548,9 @@ class LocalDBHandler(DBHandler):
                                              user=user,
                                              password=password,
                                              charset=charset, **kwargs)
+
+if __name__ == "__main__":
+    lh = LocalDBHandler(3306)
+    print lh.test()
+    print lh.version
+    print lh.version_info
