@@ -67,16 +67,16 @@ def session(**kwargs):
         a warpped db session
         
     """
-    return _Connection(**kwargs)
+    return Connection(**kwargs)
 
 
-class _Connection(object):
+class Connection(object):
     """A lightweight wrapper around MySQLdb DB-API connections.
       
     """
     def __init__(self, **kwargs):
         
-        host = kwargs.pop("host", "127.0.0.1")
+        host = kwargs.pop("host", "127.0.0.1:3306")
         charset = kwargs.pop("charset", "utf8")
         db = kwargs.pop("db", "test")
         connect_timeout = kwargs.pop("connect_timeout", 3)
@@ -91,8 +91,8 @@ class _Connection(object):
         self.max_retry = max_retry
 
         args = dict(conv=CONVERSIONS, use_unicode=use_unicode, charset=charset, 
-                    db=db, init_command=('SET time_zone = "%s"' % time_zone),
-                    connect_timeout=connect_timeout, user=user, passwd=passwd, sql_mode=sql_mode)
+                    db=db, init_command=('SET time_zone = "%s"' % timezone),
+                    connect_timeout=connect_timeout, user=user, passwd=passwd, sql_mode=sqlmode)
 
         # We accept a path to a MySQL socket file or a host(:port) string
         if "/" in host:
