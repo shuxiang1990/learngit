@@ -3,6 +3,11 @@
 from __future__ import absolute_import, division, with_statement
 
 import time
+import logging
+import copy
+import os
+import sys
+
 try:
     import pymysql as MySQLdb
 except ImportError:
@@ -10,7 +15,25 @@ except ImportError:
         import MySQLdb
     except ImportError:
         raise
-
+try:
+    import MySQLdb.constants
+    import MySQLdb.converters
+    import MySQLdb.cursors
+except ImportError:
+    # If MySQLdb isn't available this module won't actually be useable,
+    # but we want it to at least be importable on readthedocs.org,
+    # which has limitations on third-party modules.
+    if 'READTHEDOCS' in os.environ:
+        MySQLdb = None
+    else:
+        raise
+        
+class ConnectionHangError(MySQLdb.OperationalError):
+    def __init__(self, *args, **kwargs):
+        pass
+class NotSupportCursorType(Exception):
+    pass
+    
 def session(**kwargs):
     """
     Typical usage::
@@ -56,16 +79,20 @@ class _Connection(object):
         host = kwargs.pop("host", "127.0.0.1")
         charset = kwargs.pop("charset", "utf8")
         db = kwargs.pop("db", "test")
-        connect_timeout = kwargs.pop("connect_timeout", 1)
-        user = kwargs.pop("user", "root")
+        connect_timeout = kwargs.pop("connect_timeout", 3)
+        user = kwargs.pop("user", None)
         passwd = kwargs.pop("passwd", None)
         use_unicode = kwargs.pop("use_unicode", True)
-        autocommit = kwargs.pop("autocommit", True)
+        timezone = kwargs.pop("time_zone", "+8:00")
+        sqlmode = kwargs.pop("sql_mode", "")
+        max_retry = kwargs.pop("max_retry", 3)
         self._max_idle_time = float(kwargs.pop("max_idle_time", 7 * 3600))
         self.cursor = "Cursor"
+        self.max_retry = max_retry
 
-        args = dict(use_unicode=use_unicode, charset=charset, db=db, autocommit=autocommit,
-                    connect_timeout=connect_timeout, user=user, passwd=passwd)
+        args = dict(conv=CONVERSIONS, use_unicode=use_unicode, charset=charset, 
+                    db=db, init_command=('SET time_zone = "%s"' % time_zone),
+                    connect_timeout=connect_timeout, user=user, passwd=passwd, sql_mode=sql_mode)
 
         # We accept a path to a MySQL socket file or a host(:port) string
         if "/" in host:
@@ -78,7 +105,16 @@ class _Connection(object):
             else:
                 args["host"] = host
                 args["port"] = 3306
-
+                
+        if MySQLdb.version_info >= (1, 2, 5):
+            args["read_timeout"] = args["read_timeout"] if args.get("read_timeout") else 15
+            args["write_timeout"] = args["write_timeout"] if args.get("write_timeout") else 10
+        else:
+            if 'read_timeout' in args:
+                del args['read_timeout']
+            if 'write_timeout' in args:
+                del args['write_timeout']
+                
         self._db = None
         self._db_args = args
         self._last_use_time = time.time()
@@ -92,31 +128,57 @@ class _Connection(object):
         """
         self.close()
         self._db = MySQLdb.connect(**self._db_args)
-        #self._db.autocommit(False)
-
+        self._db.autocommit(True)
+        
+    def iter(self, query, cs_type=None, *parameters, **kwparameters):
+        """Returns an iterator for the given query and parameters."""
+        self._ensure_connected()
+        cursor = self._cursor(cs_type)
+        try:
+            for idx in range(self.max_retry):
+                self._execute(cursor, query, parameters, kwparameters)
+                if cursor.description is not None:
+                    break
+                else:
+                    time.sleep(0.1)
+            column_names = [d[0] for d in cursor.description]
+            for row in cursor:
+                yield Row(zip(column_names, row))
+        finally:
+            cursor.close()
+            
     def query(self, query, cs_type=None, *parameters, **kwparameters):
         """Returns a custom result for the given query and parameters.
         
         """
-        cursor = self._cursor(cs_type)
-        try:
-            self._execute(cursor, query, parameters, kwparameters)
-            if cs_type in ["SSCursor", "SSDictCursor"]:
-                while 1:
-                    try:
-                        row = cursor.fetchone()
-                    except Exception, e:
-                        cursor.close()
-                        raise e
-                    if row:
-                        yield row
-                    else:
-                        break
-            else:
-                yield [Row(row) if isinstance(row, dict) else row for row in cursor]
-        except Exception, e:
-            cursor.close()
-
+        retry_time = self.max_retry
+        while True:
+            cursor = self._cursor(cs_type)
+            try:
+                self._execute(cursor, query, parameters, kwparameters)
+                column_names = [d[0] for d in cursor.description]
+                return [Row(zip(column_names, row)) for row in cursor]
+            except TypeError:
+                self.reconnect()
+                retry_time -= 1
+                if retry_time < 0:
+                    raise
+            finally:
+                cursor.close()
+                
+    def get(self, query, cs_type=None, *parameters, **kwparameters):
+        """Returns the (singular) row returned by the given query.
+        If the query has no results, returns None.  If it has
+        more than one result, raises an exception.
+        """
+        rows = self.query(query, cs_type, *parameters, **kwparameters)
+        if not rows:
+            return None
+        elif len(rows) > 1:
+            raise Exception("Multiple rows returned for Database.get() query")
+        else:
+            return rows[0]
+                
     def execute(self, query, cs_type=None, *parameters, **kwparameters):
         """Executes the given query, returning the lastrowid from the query.
         
@@ -193,22 +255,18 @@ class _Connection(object):
             self._db = None
 
     def begin(self):
-
         if self._db:
             self._db.begin()
 
     def commit(self):
-
         if self._db:
             self._db.commit()
 
     def rollback(self):
-
         if self._db:
             self._db.rollback()
 
     def set_cursor(self, cs_type):
-
         self.cursor = cs_type
 
     def _ensure_connected(self):
@@ -238,15 +296,42 @@ class _Connection(object):
             raise NotSupportCursorType("%s not supported" % cs_type)
 
     def _execute(self, cursor, query, parameters, kwparameters):
-
-        try:
-            return cursor.execute(query, kwparameters or parameters)
-        except Exception, e:
-            self.close()
+        retry_time = self.max_retry
+        while True:
+            tid = self._db.thread_id()
+            try:
+                return cursor.execute(query, kwparameters or parameters)
+            except MySQLdb.OperationalError, e:
+                logging.error("Error connecting to MySQL on %s", self.host)
+                self.close()
+                time.sleep(0.5)
+                self.reconnect()
+                cursor = self._cursor()
+                if e.args:
+                    #(2003, "Can't connect to MySQL server on 'xxx.xxx.xxx.xxx' (110))
+                    # only retry once
+                    if e.args[0] == 2003 and retry_time < self.max_retry:
+                        raise
+                    #(2013, Lost connection to MySQL server during query) and kill old session
+                    elif e.args[0] == 2013 and tid in self.thread_ids():
+                        self._db.kill(tid)
+                retry_time -= 1
+                if retry_time < 1:
+                    if e.args and e.args[0] == 2013:
+                        raise ConnectionHangError('%s is hang!!!' % self.host)
+                    raise
 
     def __del__(self):
-
         self.close()
+        
+    def thread_ids(self):
+        cursor = self._cursor()
+        try:
+            cursor.execute('SELECT ID FROM information_schema.PROCESSLIST WHERE USER = %s', (self.user,))
+            column_names = [d[0] for d in cursor.description]
+            return [tid["ID"] for tid in [Row(zip(column_names, row)) for row in cursor]]
+        finally:
+            cursor.close()
 
 class Row(dict):
     """A dict that allows for object-like property access syntax.
@@ -257,3 +342,18 @@ class Row(dict):
             return self[name]
         except KeyError:
             raise AttributeError(name)
+
+if MySQLdb is not None:
+    # Fix the access conversions to properly recognize unicode/binary
+    FIELD_TYPE = MySQLdb.constants.FIELD_TYPE
+    FLAG = MySQLdb.constants.FLAG
+    CONVERSIONS = copy.copy(MySQLdb.converters.conversions)
+    field_types = [FIELD_TYPE.BLOB, FIELD_TYPE.STRING, FIELD_TYPE.VAR_STRING]
+    if 'VARCHAR' in vars(FIELD_TYPE):
+        field_types.append(FIELD_TYPE.VARCHAR)
+    if 'pymysql' not in sys.modules:
+        for field_type in field_types:
+            CONVERSIONS[field_type] = [(FLAG.BINARY, str)] + CONVERSIONS[field_type]
+    # Alias some common MySQL exceptions
+    IntegrityError = MySQLdb.IntegrityError
+    OperationalError = MySQLdb.OperationalError
