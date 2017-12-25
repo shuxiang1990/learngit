@@ -33,15 +33,15 @@ class op_signal(object):
         '''
         for sig, handler in sig_and_handler_map.iteritems():
             signal.signal(sig, handler)
-
-def tick(interval=5):
-    '''like time clock, one tick per 5s
-    '''
-    def signal_handler(signum, frame):
-        print 'Received signal: %d'%signum
-    while True:
-        signal.signal(signal.SIGALRM, signal_handler)
-        signal.alarm(5)
+    @staticmethod
+    def tick(interval=5):
+        '''like time clock, one tick per 5s
+        '''
+        def signal_handler(signum, frame):
+            print 'Received signal: %d'%signum
         while True:
-           print('waiting')
-           time.sleep(1)
+            signal.signal(signal.SIGALRM, signal_handler)
+            signal.alarm(5)
+            while True:
+               print('waiting')
+               time.sleep(1)
