@@ -2,9 +2,11 @@
 # -*- coding: utf-8 -*-
 
 import time
+import traceback
 
 import commands
 import signal
+import functools
 
 def exec_shell_local(shell_cmd):
     '''exec shell command, returns results as shell does
@@ -45,3 +47,39 @@ class op_signal(object):
             while True:
                print('waiting')
                time.sleep(1)
+         
+def retry(count=5, interval=1):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            for i in range(count):
+                rs = func(*args, **kwargs)
+                if rs is not False and rs is not None:
+                   return rs
+                else:
+                   time.sleep(interval)
+            return rs
+        return wrapper
+    return decorator
+
+def get_proper_file(dir, strategys, regx):
+    '''For example:
+        dir = "/u01/my3306/data"
+        strategys = ["-mmin -60 -size +1G -size -3G", "-mmin -60 -size -3G", "-mmin -300 -size -5G", "-mmin -4320 -size -5G"]
+        regx = \"*.ibd\"
+    
+        Returns:
+            files/None
+    '''
+    files = None
+    cmd = ("find %s -type f -name %s %s | grep -v test "
+           "| grep -v mysql | grep -v information_schema | grep -v performance_schema "
+           "| grep -v sys | grep -v recycle_bin")
+    for i in range(len(strategys)):
+        time.sleep(1)
+        stra = strategys[i]
+        real_cmd = cmd%(dir, regx, stra)
+        status, output = exec_shell_local(real_cmd)
+        if status == 0 and output:
+            files = output
+    return files
