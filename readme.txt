@@ -1,3 +1,6 @@
+常用方法（util.py）
+- op_signal 类处理程序被中断的情况，其中包含一个简易秒钟滴答方法
+- exec_shell_local 方法执行本地 shell 命令，返回结果类似 shell 的返回结果
 
 命令行解析工具
 - docopt：以文档形式提供，方便给人使用
