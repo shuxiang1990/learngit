@@ -83,3 +83,46 @@ def get_proper_file(dir, strategys, regx):
         if status == 0 and output:
             files = output
     return files
+
+def wait_slave_delay(port, dt=259200, dbtype="mysql"):
+    '''wait until slave catch up
+    '''
+    retry = 0
+    null_retry = 0
+    count = dt/10
+    while count and retry < 2:
+        st = get_slave_status(port)
+        if st is False:
+            return False
+        elif not st:
+            count -= 1
+            time.sleep(10)
+            continue
+        sbm = st["Seconds_Behind_Master"]
+        logger.info("retry left: %d, second behind master: %s"%(count, sbm))
+        try:
+            sbm = int(sbm)
+        except Exception, e:
+            logger.warn("may be replication stopped")
+            null_retry += 1
+            if null_retry == 5:
+                logger.error("replication stopped")
+                return False
+            else:
+                time.sleep(1)
+                continue
+        if null_retry > 0:
+            null_retry -= 1
+        if sbm == 0:
+            retry += 1
+            count -= 1
+            time.sleep(2)
+            continue
+        else:
+            count -= 1
+        time.sleep(10)
+    if count == 0:
+        logger.error("wait slave delay over 3 days, mark failed")
+        return False
+    return True
+
