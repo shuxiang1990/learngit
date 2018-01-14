@@ -84,36 +84,33 @@ def get_proper_file(dir, strategys, regx):
             files = output
     return files
 
-def wait_slave_delay(port, dt=259200, dbtype="mysql"):
-    '''wait until slave catch up
+def get_slave_delay(port):
+    ''' fetch slave delay, depends on heartbeat table but not SBM
+    '''
+    sql = """ select TO_SECONDS(now()) - TO_SECONDS(FROM_UNIXTIME(ts)) as diff_secs  from test.heartbeat where id=1 """
+    rs = select_dict_rs('127.0.0.1', port, sql, user="root",passwd='', db="mysql")
+    if not rs:
+        logger.error("%s query heartbeat error"%port)
+        return None
+    else:
+        diff_secs = rs[0]["diff_secs"]
+        return int(diff_secs)
+
+def wait_slave_delay(port, dt=259200, delay=5, dbtype="mysql"):
+    '''wait until slave catch up, default time 3 days
     '''
     retry = 0
-    null_retry = 0
     count = dt/10
+    # used for get_slave_delay exception retry
+    exception_retry = 0
     while count and retry < 2:
-        st = get_slave_status(port)
-        if st is False:
-            return False
-        elif not st:
+        st = get_slave_delay(port)
+        if not st:
             count -= 1
             time.sleep(10)
             continue
-        sbm = st["Seconds_Behind_Master"]
-        logger.info("retry left: %d, second behind master: %s"%(count, sbm))
-        try:
-            sbm = int(sbm)
-        except Exception, e:
-            logger.warn("may be replication stopped")
-            null_retry += 1
-            if null_retry == 5:
-                logger.error("replication stopped")
-                return False
-            else:
-                time.sleep(1)
-                continue
-        if null_retry > 0:
-            null_retry -= 1
-        if sbm == 0:
+        logger.info("retry left: %d, slave delay: %d"%(count, st))
+        if st <= delay:
             retry += 1
             count -= 1
             time.sleep(2)
