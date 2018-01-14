@@ -123,3 +123,11 @@ def wait_slave_delay(port, dt=259200, delay=5, dbtype="mysql"):
         return False
     return True
 
+def utf8(unicode_str):
+    if isinstance(unicode_str, unicode):
+        unicode_str = unicode_str.encode('utf8')
+    else:
+        if not isinstance(unicode_str, str):
+            unicode_str = str(unicode_str)
+        unicode_str = unicode(unicode_str, "utf8", errors="ignore")
+    return unicode_str
