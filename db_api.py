@@ -27,21 +27,21 @@ except ImportError:
         MySQLdb = None
     else:
         raise
-        
+
 class ConnectionHangError(MySQLdb.OperationalError):
     def __init__(self, *args, **kwargs):
         pass
+
 class NotSupportCursorType(Exception):
     pass
-    
+
 def session(**kwargs):
     """
     Typical usage::
-
         db = session(host=host, db=database, user=user,
                              passwd=password, max_idle_time=max_idle_time,
                              connect_timeout=connect_timeout)
-        
+
         db.query("select * from a")
         db.insertmany(Config.insertmany, [(5,5,'xxxx'),(6,6,'updatemany')])
         db.execute("set autocommit = 0")
@@ -49,33 +49,29 @@ def session(**kwargs):
         print db.execute("insert into a values (2,3,'hello')")
         db.commit()
         db.close()
-
         # set custom cursor
         db.set_cursor("SSDictCursor")
         db.query("select * from a")
-
         # or you can set cursor on every query
         db.query("select * from a", cs_type="SSDictCursor")
-
         # the results format between SSDictCursor and DictCursor are different, please check
         db.query("select * from a", cs_type="SSDictCursor")
         db.query("select * from a", cs_type="DictCursor")
-
     Args:
         kwargs: args used by Connection
     Return: 
         a warpped db session
-        
+
     """
     return Connection(**kwargs)
 
-
 class Connection(object):
     """A lightweight wrapper around MySQLdb DB-API connections.
-      
+
     """
+
     def __init__(self, **kwargs):
-        
+
         host = kwargs.pop("host", "127.0.0.1:3306")
         charset = kwargs.pop("charset", "utf8")
         db = kwargs.pop("db", "test")
@@ -90,7 +86,7 @@ class Connection(object):
         self.cursor = "Cursor"
         self.max_retry = max_retry
 
-        args = dict(conv=CONVERSIONS, use_unicode=use_unicode, charset=charset, 
+        args = dict(conv=CONVERSIONS, use_unicode=use_unicode, charset=charset,
                     db=db, init_command=('SET time_zone = "%s"' % timezone),
                     connect_timeout=connect_timeout, user=user, passwd=passwd, sql_mode=sqlmode)
 
@@ -105,7 +101,7 @@ class Connection(object):
             else:
                 args["host"] = host
                 args["port"] = 3306
-                
+
         if MySQLdb.version_info >= (1, 2, 5):
             args["read_timeout"] = args["read_timeout"] if args.get("read_timeout") else 15
             args["write_timeout"] = args["write_timeout"] if args.get("write_timeout") else 10
@@ -114,7 +110,7 @@ class Connection(object):
                 del args['read_timeout']
             if 'write_timeout' in args:
                 del args['write_timeout']
-                
+
         self._db = None
         self._db_args = args
         self._last_use_time = time.time()
@@ -124,12 +120,12 @@ class Connection(object):
 
     def reconnect(self):
         """Closes the existing database connection and re-opens it.
-        
+
         """
         self.close()
         self._db = MySQLdb.connect(**self._db_args)
         self._db.autocommit(True)
-        
+
     def iter(self, query, cs_type=None, *parameters, **kwparameters):
         """Returns an iterator for the given query and parameters."""
         self._ensure_connected()
@@ -146,10 +142,10 @@ class Connection(object):
                 yield Row(zip(column_names, row))
         finally:
             cursor.close()
-            
+
     def query(self, query, cs_type=None, *parameters, **kwparameters):
         """Returns a custom result for the given query and parameters.
-        
+
         """
         retry_time = self.max_retry
         while True:
@@ -165,7 +161,7 @@ class Connection(object):
                     raise
             finally:
                 cursor.close()
-                
+
     def get(self, query, cs_type=None, *parameters, **kwparameters):
         """Returns the (singular) row returned by the given query.
         If the query has no results, returns None.  If it has
@@ -178,10 +174,10 @@ class Connection(object):
             raise Exception("Multiple rows returned for Database.get() query")
         else:
             return rows[0]
-                
+
     def execute(self, query, cs_type=None, *parameters, **kwparameters):
         """Executes the given query, returning the lastrowid from the query.
-        
+
             rowcount is a more reasonable default return value than lastrowid,
             but for historical compatibility execute() must return lastrowid.
         """
@@ -189,7 +185,7 @@ class Connection(object):
 
     def execute_lastrowid(self, query, cs_type=None, *parameters, **kwparameters):
         """Executes the given query, returning the lastrowid from the query.
-        
+
         """
         cursor = self._cursor(cs_type)
         try:
@@ -200,7 +196,7 @@ class Connection(object):
 
     def execute_rowcount(self, query, cs_type=None, *parameters, **kwparameters):
         """Executes the given query, returning the affected rowcount from the query.
-        
+
         """
         cursor = self._cursor(None)
         try:
@@ -211,14 +207,12 @@ class Connection(object):
 
     def executemany(self, query, *parameters):
         """Executes the given query against all the given param sequences.
-
         We return the lastrowid from the query.
         """
         return self.executemany_lastrowid(query, *parameters)
 
     def executemany_lastrowid(self, query, *parameters):
         """Executes the given query against all the given param sequences.
-
         We return the lastrowid from the query.
         """
         cursor = self._cursor(None)
@@ -230,7 +224,6 @@ class Connection(object):
 
     def executemany_rowcount(self, query, *parameters):
         """Executes the given query against all the given param sequences.
-
         We return the rowcount from the query.
         """
         cursor = self._cursor(None)
@@ -248,7 +241,6 @@ class Connection(object):
 
     def close(self):
         """Close the connection and reclaim to connection pool
-
         """
         if getattr(self, "_db", None):
             self._db.close()
@@ -282,7 +274,7 @@ class Connection(object):
 
     def _cursor(self, cs_type):
         """Returns typical cursor
-        
+
         """
         self._ensure_connected()
         if not cs_type:
@@ -308,11 +300,11 @@ class Connection(object):
                 self.reconnect()
                 cursor = self._cursor()
                 if e.args:
-                    #(2003, "Can't connect to MySQL server on 'xxx.xxx.xxx.xxx' (110))
+                    # (2003, "Can't connect to MySQL server on 'xxx.xxx.xxx.xxx' (110))
                     # only retry once
                     if e.args[0] == 2003 and retry_time < self.max_retry:
                         raise
-                    #(2013, Lost connection to MySQL server during query) and kill old session
+                    # (2013, Lost connection to MySQL server during query) and kill old session
                     elif e.args[0] == 2013 and tid in self.thread_ids():
                         self._db.kill(tid)
                 retry_time -= 1
@@ -323,7 +315,7 @@ class Connection(object):
 
     def __del__(self):
         self.close()
-        
+
     def thread_ids(self):
         cursor = self._cursor()
         try:
@@ -333,15 +325,18 @@ class Connection(object):
         finally:
             cursor.close()
 
+
 class Row(dict):
     """A dict that allows for object-like property access syntax.
-    
+
     """
+
     def __getattr__(self, name):
         try:
             return self[name]
         except KeyError:
             raise AttributeError(name)
+
 
 if MySQLdb is not None:
     # Fix the access conversions to properly recognize unicode/binary
